@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Support Triage{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #fafaf8;
+      --fg: #1a1a1a;
+      --muted: #6a6a6a;
+      --border: #e3e3e0;
+      --accent: #0b6bcb;
+      --needs-review-bg: #fff5e6;
+      --needs-review-border: #f0a860;
+      --partial-bg: #fdf7e3;
+      --partial-border: #d9c878;
+      --complete-bg: #edf7ed;
+      --complete-border: #a6cfa6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--fg);
+      background: var(--bg);
+      line-height: 1.5;
+    }
+    header {
+      padding: 20px 32px;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+    }
+    header h1 {
+      margin: 0 0 4px 0;
+      font-size: 20px;
+      font-weight: 600;
+    }
+    header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    main { padding: 24px 32px; max-width: 1200px; margin: 0 auto; }
+    .filters {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 20px;
+      padding: 12px 16px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .filters label {
+      font-size: 13px;
+      color: var(--muted);
+      margin-right: 4px;
+    }
+    .filters a {
+      display: inline-block;
+      padding: 4px 10px;
+      font-size: 13px;
+      text-decoration: none;
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #fff;
+      margin-right: 4px;
+    }
+    .filters a.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .count { color: var(--muted); font-size: 13px; margin-left: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+      vertical-align: top;
+    }
+    th {
+      background: #f2f2ef;
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+    }
+    tr:last-child td { border-bottom: none; }
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 12px;
+      border-radius: 12px;
+      border: 1px solid transparent;
+    }
+    .status-complete { background: var(--complete-bg); border-color: var(--complete-border); }
+    .status-partial { background: var(--partial-bg); border-color: var(--partial-border); }
+    .status-needs_review { background: var(--needs-review-bg); border-color: var(--needs-review-border); }
+    tr.row-needs_review { background: var(--needs-review-bg); }
+    tr.row-needs_review td:first-child { border-left: 3px solid var(--needs-review-border); }
+    .summary { color: var(--fg); }
+    .summary-empty { color: var(--muted); font-style: italic; }
+    .timestamp { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; color: var(--muted); font-size: 13px; white-space: nowrap; }
+    .intent-tag {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 12px;
+      color: var(--fg);
+      background: #f2f2ef;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 48px 16px;
+      color: var(--muted);
+    }
+    footer {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    footer a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{% block header_title %}Support Triage Dashboard{% endblock %}</h1>
+    <p>{% block header_subtitle %}Real extracted tickets from post-call analysis. Read-only, curated fields only.{% endblock %}</p>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    <a href="/tickets">Tickets</a>
+  </footer>
+</body>
+</html>

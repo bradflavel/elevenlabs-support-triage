@@ -1,0 +1,58 @@
+{% extends "_base.html" %}
+
+{% block title %}Tickets - Support Triage{% endblock %}
+
+{% block content %}
+<div class="filters">
+  <div>
+    <label>Intent:</label>
+    <a href="/tickets{% if active_status %}?status={{ active_status }}{% endif %}" class="{% if not active_intent %}active{% endif %}">all</a>
+    {% for i in intents %}
+      <a href="/tickets?intent={{ i }}{% if active_status %}&status={{ active_status }}{% endif %}"
+         class="{% if active_intent == i %}active{% endif %}">{{ i }}</a>
+    {% endfor %}
+  </div>
+  <div>
+    <label>Status:</label>
+    <a href="/tickets{% if active_intent %}?intent={{ active_intent }}{% endif %}" class="{% if not active_status %}active{% endif %}">all</a>
+    {% for s in statuses %}
+      <a href="/tickets?{% if active_intent %}intent={{ active_intent }}&{% endif %}status={{ s }}"
+         class="{% if active_status == s %}active{% endif %}">{{ s }}</a>
+    {% endfor %}
+  </div>
+  <div class="count">{{ total }} ticket{{ '' if total == 1 else 's' }}</div>
+</div>
+
+{% if tickets %}
+<table>
+  <thead>
+    <tr>
+      <th>Created</th>
+      <th>Intent</th>
+      <th>Status</th>
+      <th>Summary</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in tickets %}
+    <tr class="{% if t.extraction_status.value == 'needs_review' %}row-needs_review{% endif %}">
+      <td class="timestamp">{{ t.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+      <td><span class="intent-tag">{{ t.intent.value }}</span></td>
+      <td><span class="status-badge status-{{ t.extraction_status.value }}">{{ t.extraction_status.value }}</span></td>
+      <td>
+        {% if t.summary %}
+          <span class="summary">{{ t.summary }}</span>
+        {% else %}
+          <span class="summary-empty">(no summary extracted)</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+  <p>No tickets yet. Make a test call against the configured agent to see results here.</p>
+</div>
+{% endif %}
+{% endblock %}
