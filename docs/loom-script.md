@@ -2,83 +2,109 @@
 
 A 3-5 minute voiceover for the demo walkthrough. Record after the deployed agent is working end-to-end and after the test matrix is populated.
 
-Target length: aim for 4 minutes. Faster is better than slower; recruiters skim.
+Target length: aim for around 4 minutes. This is a guide, not a word-for-word reading — speak naturally, rephrase on the fly, add asides if they come up.
 
 ---
 
 ## Setup before recording
 
-1. Open three browser tabs in this order (left to right):
+1. Open four browser tabs in this order (left to right):
    - The deployed ElevenLabs agent widget (the page you call from).
    - The deployed `/tickets` dashboard.
    - The GitHub repo, scrolled to the README.
-2. In a code editor, have [app/webhook.py](../app/webhook.py) open on the HMAC verification section (lines roughly around the `construct_event` call).
-3. Start with an empty `/tickets` dashboard for the demo (make a fresh row on camera).
+   - `tests/test_matrix.md` on GitHub, ready to scroll.
+2. Have [app/webhook.py](../app/webhook.py) open in a code editor, scrolled to the HMAC section.
+3. Demo with the populated dashboard — keeps the live link looking alive after the recording.
 
 ---
 
 ## Script
 
-### 0:00 - 0:20 - Intro (15-20s)
+Treat everything below as **talking points**, not lines to recite. If you hit a moment and a different phrasing feels more natural, use it.
 
-> "This is a voice-agent demo for customer support triage. A caller speaks to an ElevenLabs Conversational AI agent, the agent classifies their intent and extracts the key details using the platform's built-in Data Collection analysis, and a post-call webhook lands a structured ticket in Postgres. The dashboard you're about to see is public and read-only - it shows only curated, privacy-safe fields. I'll make a live call, show the ticket appearing, then walk through one piece of the code I'm proud of."
+### 0:00 - 0:20 — Intro
 
-### 0:20 - 1:40 - Live call (80s)
+> "Hey, quick walkthrough of a voice agent demo I built. Someone calls in, the ElevenLabs agent triages the call, and a structured ticket ends up on a public dashboard. I'll make a call, show you the ticket appearing, then walk through a bit of the code and the test matrix I ran against it."
 
-> "First, the call. I'm using the browser widget here."
+Keep this short. Don't explain the whole architecture up front — the call will do that for you.
 
-Click to start the call. Say one of the test-matrix scenarios - recommend scenario 1 (clear billing charge dispute) for the demo because it's unambiguous and shows a clean `complete` status. Something like:
+### 0:20 - 1:40 — Live call
 
-> "Hi, I'm looking at my statement and there's a charge for twenty-nine ninety-nine that I don't recognize. Can you help me figure out what that was?"
+> "So here's the widget. I'll pretend I'm calling in about a billing issue."
 
-Let the agent do its turn. Answer naturally. When it wraps the call, let it end.
+Start the call. Use Scenario 1 phrasing — clean and unambiguous:
 
-> "That's the call. The agent's already fired the post-call webhook to our FastAPI backend, which verified the signature and upserted a row in Postgres."
+> "Hi, I'm looking at my statement and there's a charge for twenty-nine ninety-nine I don't recognize. Can you help me figure out what that was?"
 
-### 1:40 - 2:30 - Dashboard (50s)
+Let the agent ask its follow-up questions, answer naturally. When it closes, let the call end.
 
-Switch to the `/tickets` tab and refresh.
+> "Okay, so that's done. Behind the scenes, the agent's analyzer has already run over the transcript, pulled out the intent and the key fields, and fired a webhook to my backend. It's verified the signature, written a row to Postgres, and the dashboard should be live."
 
-> "And here's the ticket. This is the public dashboard - the columns are deliberately narrow: timestamp, intent, extraction status, and a sanitized summary. Notice what's not here: no conversation ID, no transcript, no raw payload. Those fields exist in Postgres as JSONB, but they're never rendered. That's the privacy rule: the sensitive data can't leak through a template it never reaches."
+### 1:40 - 2:30 — Dashboard
 
-Point to the intent and status columns.
+Switch to `/tickets`, refresh.
 
-> "The intent is classified as billing. The extraction status is `complete` because the analyzer filled every required field. When calls are ambiguous or multi-intent, you get `needs_review` instead, visually flagged. When the analyzer gets the intent but misses a sub-field, you get `partial`. That three-state distinction matters because support-ops cares about which tickets a human needs to look at."
+> "And there it is at the top. Billing, complete, clean summary."
 
-Optionally click the intent filter to show `billing` filtered view, then click back to `all`.
+Pause for a beat so it's readable.
 
-### 2:30 - 3:45 - Code walkthrough (75s)
+> "A few things I want to point out about this dashboard. First, what's *not* on it — no conversation IDs, no transcripts, no raw payloads, no account identifiers. All that stuff exists in the database but it's never rendered. That's deliberate: sensitive data can't leak through a template it never reaches. The privacy isn't a setting, it's architectural."
 
-Switch to the editor showing [app/webhook.py](../app/webhook.py).
+Point at the intent column.
 
-> "The piece I want to show is the webhook handler. Three things are worth calling out."
+> "Second — the intent classifications come from the analyzer but they're constrained to our enum at the platform level. One of the things I learned from testing was that when no enum value fits, the platform actually returns null rather than forcing a pick, which is nice."
 
-Scroll to the `construct_event` block.
+Point at status.
 
-> "First: HMAC verification. We use the ElevenLabs SDK's `construct_event` with the raw request body decoded to a string. Note we read the body **before** FastAPI parses JSON - the signature is computed over the exact bytes the platform sent, so any re-serialization would break verification."
+> "And the status column — complete means everything extracted cleanly, partial means the call happened but the analyzer couldn't fill some required field. There's a third state, `needs_review`, for ambiguous or multi-intent calls, but that's a v1.1 feature — I ended up deferring the ambiguity signal because getting an LLM to self-report its own confidence reliably is harder than it looks."
 
-Scroll to the `derive_intent_and_status` call.
+Click the billing filter to show it working, click back to all.
 
-> "Second: intent mapping. The analyzer can return one of our five supported intents, an unknown intent, a multi-intent signal, or nothing. A confident classification outside our enum becomes `other` with status `partial` - that's the 'we understood you but don't handle this' case. An ambiguous or multi-intent signal becomes `needs_review`. Those are deliberately distinct; collapsing them would hide exactly the cases support-ops needs to review."
+### 2:30 - 3:30 — Code
 
-Scroll to the `pg_insert` / `on_conflict_do_update` block.
+Switch to `webhook.py`.
 
-> "Third: idempotency. We upsert by `conversation_id` with Postgres' `ON CONFLICT DO UPDATE`. ElevenLabs retries on non-200 responses - and we only return 200 once the row is committed. So retries are safe, and safe idempotency lets us return non-200 honestly when the DB is actually unreachable."
+> "Okay, quick code tour. Three things worth calling out in the webhook handler."
 
-### 3:45 - 4:15 - Close (30s)
+Scroll to `construct_event`.
 
-Switch to the README tab.
+> "First, signature verification. I'm using the ElevenLabs SDK's `construct_event` against the raw request body, and crucially I read the bytes *before* FastAPI parses anything — because the signature is computed over the exact bytes the platform sent. If you let FastAPI re-serialize the JSON, verification breaks. Small thing, easy to get wrong."
 
-> "Everything else is in the repo. The README has the architecture diagram, the tech-choice rationale, the failure-modes table, and links to the planning docs - design, the operator runbook, the Data Collection field spec, and the agent prompts. CI runs on every push: 23 tests, including signature rejection, idempotent replay, partial-extraction status, and a privacy regression test that fails if the dashboard ever leaks a conversation ID."
+Scroll to `derive_intent_and_status`.
 
-> "Thanks for watching."
+> "Second, how I handle what comes back from the analyzer. If the intent is one of the five we support, we use it. If it's something weird or missing, we store null and mark the ticket partial — we don't force it into `other`. Partial and `other` mean different things and I wanted to keep them distinct."
+
+Scroll to `on_conflict_do_update`.
+
+> "Third, idempotency. I upsert by conversation ID. ElevenLabs retries webhooks on any non-200 response, and I only return 200 after the row actually commits. So retries are safe — they just write the same row — and that safety lets me honestly return a 500 when the database is genuinely down. I don't have to fake success to avoid retry storms."
+
+### 3:30 - 4:10 — Test matrix and close
+
+Switch to `tests/test_matrix.md`.
+
+> "Last thing — the test matrix. I ran 12 scenarios against the deployed agent: clean calls across each intent, plus some harder ones like vague input, multi-intent calls, self-correction, a caller who refuses to say why they're calling, and a deliberate PII leak test where I put an email right in the opening line."
+
+Scroll to the observations.
+
+> "Eleven pass, one fail, and the fail's actually interesting. The analyzer occasionally populates an intent-specific field on calls where it shouldn't — like tagging a login call with a `password_change` type because it saw the word password. Strengthening the field descriptions reduced it but didn't eliminate it. The fix is about ten lines of backend validation, which I wrote up as the v1.1 priority. I wanted the matrix to capture the bug honestly instead of silently patching it — same defence-in-depth idea as the PII sanitizer."
+
+Switch briefly to the README.
+
+> "Everything else is in the repo. Architecture, tech choices, the full failure modes table, all the planning docs. Thanks for watching."
 
 ---
 
+## Delivery notes
+
+- **Contractions everywhere.** "It's" not "it is", "I'm" not "I am", "that's" not "that is".
+- **Shorter sentences.** If a sentence runs more than two lines in the script, it'll sound like reading. Break it.
+- **Little asides land well.** "Small thing, easy to get wrong" or "harder than it looks" make technical content feel conversational.
+- **It's okay to pause.** Two seconds of silence while the dashboard loads is fine. Don't fill every gap.
+- **If you stumble, keep going.** Recruiters watch recorded content at 1.25x. One flubbed word is invisible.
+
 ## Recording tips
 
-- Speak like a human explaining something to a colleague, not like reading a script. If a line feels stilted, rephrase on the fly.
-- If the agent call goes off the rails, stop and restart. The live call is 40% of the impact.
-- Keep the dashboard tab loaded before recording so the refresh is instant.
-- Volume-level your voice and desktop audio separately if possible - voice should be clearly dominant.
-- After uploading, update the placeholder `<!-- LOOM_URL_PLACEHOLDER -->` in `README.md` with the real URL, commit as `docs: add loom walkthrough link`, and tag the commit `v1.0`.
+- Two takes max. Pick the less stilted one even if the wording's imperfect.
+- Preload every tab. Slow refreshes kill pace.
+- Level voice and desktop audio separately; voice should be clearly dominant.
+- After uploading, update `<!-- LOOM_URL_PLACEHOLDER -->` in `README.md`, commit as `docs: add loom walkthrough link`, tag `v1.0`.
