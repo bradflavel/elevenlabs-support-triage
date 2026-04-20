@@ -6,19 +6,63 @@
 {% block header_subtitle %}Voice agent demo. Make a call, then watch your ticket land on the dashboard.{% endblock %}
 
 {% block content %}
-<section style="max-width: 680px;">
+<style>
+  .demo-card {
+    max-width: 640px;
+    margin: 40px auto 0;
+    background: #fff;
+    padding: 32px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .demo-card p { margin: 0 0 16px; }
+  .demo-card p:last-child { margin-bottom: 0; }
+  .demo-card .intents {
+    display: inline-block;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 13px;
+    background: #f2f2ef;
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: var(--fg);
+  }
+  .demo-cta {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .demo-cta a {
+    display: inline-block;
+    padding: 8px 16px;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: 500;
+    font-size: 14px;
+  }
+  .demo-cta a:hover { background: #0958a8; }
+</style>
+
+<section class="demo-card">
   <p>
-    This is a voice agent that triages customer support calls across five intents -
-    billing, technical, account change, cancellation, or other. Click the widget below
-    to make a call. Once the call ends, your ticket will appear on the
-    <a href="/tickets">/tickets</a> dashboard within a few seconds.
+    This is a voice agent that triages customer support calls across five intents:
+    <span class="intents">billing</span>
+    <span class="intents">technical</span>
+    <span class="intents">account_change</span>
+    <span class="intents">cancellation</span>
+    <span class="intents">other</span>
+  </p>
+  <p>
+    Click <strong>Start a call</strong> in the bottom-right corner to speak to the agent.
+    Once the call ends, your ticket will appear on the dashboard within a few seconds.
   </p>
 
-  <elevenlabs-convai agent-id="agent_2301kpm5jwagedyvcnt09sfebdph"></elevenlabs-convai>
-  <script src="https://unpkg.com/@elevenlabs/convai-widget-embed" async type="text/javascript"></script>
-
-  <p style="margin-top: 24px;">
+  <div class="demo-cta">
     <a href="/tickets">View the tickets dashboard &rarr;</a>
-  </p>
+  </div>
 </section>
+
+<elevenlabs-convai agent-id="agent_2301kpm5jwagedyvcnt09sfebdph"></elevenlabs-convai>
+<script src="https://unpkg.com/@elevenlabs/convai-widget-embed" async type="text/javascript"></script>
 {% endblock %}

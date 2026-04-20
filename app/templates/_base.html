@@ -133,7 +133,16 @@
       color: var(--muted);
       font-size: 12px;
     }
-    footer a { color: var(--accent); }
+    footer a { color: var(--accent); margin: 0 6px; }
+    .back-link {
+      margin: 0 0 16px 0;
+      font-size: 13px;
+    }
+    .back-link a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+    .back-link a:hover { color: var(--accent); text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -145,6 +154,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer>
+    <a href="/">Home</a>
     <a href="/tickets">Tickets</a>
   </footer>
 </body>
