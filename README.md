@@ -4,7 +4,7 @@
 
 A deployable voice-agent demo for customer-support triage. An ElevenLabs Conversational AI agent handles inbound web-widget calls, routes across five support intents (billing, technical, account change, cancellation, other), and uses the platform's built-in Data Collection analysis to extract structured fields. A post-call webhook fires to a FastAPI backend which verifies the HMAC signature, persists a ticket row to Postgres (idempotent upsert), and exposes a public read-only `/tickets` dashboard showing privacy-safe curated fields.
 
-> **Try it:** Live demo at [web-production-e61e1.up.railway.app/tickets](https://web-production-e61e1.up.railway.app/tickets). Call the agent via the embedded widget and your ticket will appear on the public dashboard within seconds of the call ending.
+> **Try it:** Live demo at [web-production-e61e1.up.railway.app](https://web-production-e61e1.up.railway.app). Call the agent via the embedded widget and your ticket will appear on the public dashboard within seconds of the call ending.
 
 ## Architecture
 
@@ -214,9 +214,9 @@ elevenagents-support-triage/
 
 ## Loom walkthrough
 
-A 3-5 minute walkthrough recorded against the deployed service: a live call from the browser widget, the ticket appearing on the public `/tickets` dashboard within seconds, and a brief tour of the webhook handler's HMAC verification, idempotent upsert, and PII sanitizer.
+A ~7 minute walkthrough recorded against the deployed service: a live call from the browser widget, the ticket appearing on the public `/tickets` dashboard within seconds, and a brief tour of the webhook handler's HMAC verification, idempotent upsert, and PII sanitizer.
 
-<!-- LOOM_URL_PLACEHOLDER - populated after recording -->
+[Watch the walkthrough →](https://www.loom.com/share/b23578000db941438509ad6a6cef62ed)
 
 ---
 
