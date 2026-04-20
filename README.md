@@ -4,7 +4,7 @@
 
 A deployable voice-agent demo for customer-support triage. An ElevenLabs Conversational AI agent handles inbound web-widget calls, routes across five support intents (billing, technical, account change, cancellation, other), and uses the platform's built-in Data Collection analysis to extract structured fields. A post-call webhook fires to a FastAPI backend which verifies the HMAC signature, persists a ticket row to Postgres (idempotent upsert), and exposes a public read-only `/tickets` dashboard showing privacy-safe curated fields.
 
-> **Try it:** Live demo at <!-- RAILWAY_URL_PLACEHOLDER -->. Call the agent via the embedded widget and your ticket will appear on the public dashboard within seconds of the call ending.
+> **Try it:** Live demo at [web-production-e61e1.up.railway.app/tickets](https://web-production-e61e1.up.railway.app/tickets). Call the agent via the embedded widget and your ticket will appear on the public dashboard within seconds of the call ending.
 
 ## Architecture
 
@@ -114,20 +114,23 @@ Integration tests use a per-test transactional rollback fixture so nothing persi
 
 ## Test matrix
 
-Extraction behaviour was validated against 10-12 synthetic calls spanning the five intents plus adversarial cases (vague input, out-of-scope topics, optional-field refusals, multi-intent ambiguity, voice-vs-text parity). Each scenario records the caller input, the agent's response shape, and the full Data Collection extraction output with derived `extraction_status`.
+Extraction behaviour was validated against 12 scenarios executed against the deployed Phase 2 agent, spanning the five intents plus adversarial cases: vague input, multi-intent calls, self-correction, uncooperative callers, partial extraction, and a deliberate PII-leak regression test. Each scenario records the caller script, the full Data Collection extraction output, and the derived `extraction_status`.
 
-<!-- TEST_MATRIX_PLACEHOLDER - filled after Phase 2 calls are made -->
+**Results:** 11 PASS, 1 hard FAIL (plus 2 partial-fails on cross-field null discipline that PASS on primary classification). Status distribution: 11 `complete`, 1 `partial`, 0 `needs_review` (path intentionally deferred to v1.1 — see Observations below).
 
-See [tests/test_matrix.md](tests/test_matrix.md) for the full list of scenarios and their extracted outputs.
+Full per-scenario results in [tests/test_matrix.md](tests/test_matrix.md).
 
 ### Observations from live extraction testing
 
-Four findings surfaced during Phase 1 scenario runs that shaped the final design:
+Matrix execution surfaced four findings that shape the v1.0 architecture and inform v1.1 priorities:
 
-1. **Platform-level enums return `null`, not a forced pick, when no value fits.** An out-of-scope call (caller describing a login issue on a billing-only line) produced `intent: other` with `billing_issue_type: null`, correctly acknowledging that no billing category applied. Backend logic treats null required fields as `partial`, not as a classification.
-2. **The analyzer respects "leave empty" instructions on optional numeric fields.** A deliberately vague call ("my bill just looks weird, I didn't look closely") produced `amount_disputed: null` - the model declined to invent a number. Strong anti-hallucination behaviour driven entirely by the field description.
-3. **Optional-field refusals are cleanly captured as null.** A caller who declined to share an account identifier produced `account_identifier: null`, with all other fields extracting normally. The agent did not press after a single refusal, per prompt instructions.
-4. **Voice captures spoken email addresses literally.** A voice call produced `account_identifier: "test at symbol email.com"` rather than `test@email.com`. See the voice-channel limitations note above.
+1. **Platform-level enums return `null`, not a forced pick, when no value fits.** An out-of-scope call (caller describing a login issue on a billing-only Phase 1 agent) produced `intent: other` with `billing_issue_type: null`, correctly acknowledging that no billing category applied. Backend logic treats null required fields as `partial`, not as a classification — the three-state status model expresses this directly.
+
+2. **The analyzer respects anti-hallucination instructions on optional fields.** Scenario 2 and earlier vague-caller tests produced `amount_disputed: null` when no amount was specified, and Scenario 11 produced `account_change_type: null` when the caller couldn't articulate what they wanted to change. Strongly-worded field descriptions ("leave empty if...") prevent the analyzer from inventing values to fill slots. Scenario 11 is a textbook `partial` case and the strongest validation of the three-state status model in the matrix.
+
+3. **Cross-field pattern-matching persists despite guard-clause descriptions.** Three scenarios (3, 5, 9) showed intent-specific fields populating on calls where they shouldn't have — `account_change_type: password` on a login call; `billing_issue_type: subscription_change` on cancellation and plan-change calls. Strengthened descriptions with explicit "leave empty if not [X]" guard clauses reduced but did not eliminate the behaviour. The analyzer occasionally surface-matches on vocabulary even when instructed otherwise. This is the clearest signal in the matrix that prompt-based defences alone are insufficient; backend cross-field validation is planned for v1.1 (approximately 10 lines of code in `app/webhook.py` that null intent-specific fields when they don't match primary intent).
+
+4. **PII defence-in-depth validated against hostile input.** Scenario 12 deliberately embedded `test@email.com` in the caller's opening statement. The rendered `/tickets` dashboard contains no email in the summary, despite the caller explicitly stating it. The `account_identifier` field captured the email for downstream specialist use but is not rendered publicly. Two-layer defence (LLM description instructing no-PII in summary + backend regex sanitizer) confirmed end-to-end against a deliberately adversarial test.
 
 ## Failure modes considered
 
@@ -141,9 +144,10 @@ Four findings surfaced during Phase 1 scenario runs that shaped the final design
 | Unknown Data Collection field appears | Tolerated (`extra="allow"`), persisted in `extracted_data` JSONB. |
 | Analyzer returns `null` for intent (no enum value fits) | Row persisted, `intent = null`, `extraction_status = partial`. Observed in out-of-scope test scenario. |
 | Analyzer returns intent outside our enum (defensive path) | Row persisted, `intent = null`, `extraction_status = partial`. Platform-level enum enforcement makes this path unlikely; backend re-validation is belt-and-braces. |
-| Analyzer flags ambiguity / multi-intent | Row persisted with `intent = needs_review`, `extraction_status = needs_review`. |
+| Analyzer flags ambiguity / multi-intent | Row persisted with `intent = needs_review`, `extraction_status = needs_review`. Note: this path is plumbed but the `ambiguity_flag` signal was deferred to v1.1 — see Observations. |
+| **Cross-field leakage (intent-specific field populated on non-matching call)** | v1.0 behaviour: stored as-returned by analyzer. v1.1 fix: backend nulls intent-specific fields when they don't match primary intent. Observed in three matrix scenarios; does not affect primary classification or dashboard rendering. |
 | Caller provides email by voice | STT transcribes as natural-language ("test at email dot com") rather than `test@email.com`. Captured in `account_identifier` which is never rendered publicly; downstream systems needing email format should verify via SMS/email rather than STT. |
-| Summary contains PII | Redacted before persistence; placeholder used if fully redacted. |
+| Summary contains PII | Redacted before persistence; placeholder used if fully redacted. Validated against hostile input (Scenario 12). |
 | DB unreachable | 500. ElevenLabs retries on non-200; upsert by `conversation_id` makes retry safe. |
 | Webhook delivered twice (retry or duplicate) | Idempotent: `INSERT ... ON CONFLICT DO UPDATE` keyed on `conversation_id`. |
 | Railway volume reset | Filesystem is ephemeral; all durable state lives in Postgres. |
@@ -181,16 +185,23 @@ elevenagents-support-triage/
     test_matrix.md          # scenario documentation
 ```
 
-## Limitations and what v2 would add
+## Roadmap
+
+**v1.1 — immediate follow-ups from the matrix run:**
+
+- **Backend cross-field validation**: null intent-specific fields when they don't match primary intent (Observations #3). Approximately 10 lines of code in `app/webhook.py`. Completes the defence-in-depth story for extraction, exactly as the PII sanitizer does for summary privacy.
+- **Extractive ambiguity signal**: declare `mentioned_issues` as a list of strings in Data Collection config; derive `needs_review` in the backend when list length > 1. Replaces the deferred `ambiguity_flag` boolean with a concrete extractive task the LLM can do reliably.
+
+**v2 — larger scope:**
 
 - **Real phone numbers via Twilio / ElevenLabs phone**: the demo uses the browser widget only. A production deployment would route PSTN calls into the same agent.
-- **Retry/backoff metrics**: right now we just rely on ElevenLabs' retry policy. A real system would track delivery attempts per `conversation_id` and alarm on persistent failures.
+- **Email/identifier verification channel**: when voice callers provide an email, surface a post-call SMS or email confirmation rather than relying on STT to capture the identifier correctly.
+- **Retry/backoff metrics**: currently relying on ElevenLabs' retry policy. A real system would track delivery attempts per `conversation_id` and alarm on persistent failures.
 - **Alembic migrations**: single-model schema is fine for a demo. Adding a second model without Alembic would be the trigger to introduce it.
 - **Authenticated admin view**: a companion route behind auth for ops staff to view `extracted_data`, `raw_payload`, and transcript excerpts for rows flagged `needs_review`. The public dashboard would remain curated-only.
 - **Structured logging + tracing**: request IDs, correlation with `conversation_id`, export to an APM. Current setup is stdlib `logging` only.
 - **Dashboard search and pagination**: the current view is capped at 200 rows, unpaginated. Trivial to extend once the volume warrants it.
 - **Agent prompt A/B**: multiple prompt variants keyed off a feature flag, with the test matrix re-run against each.
-- **Email/identifier verification channel**: when voice callers provide an email, surface a post-call SMS or email confirmation rather than relying on STT to capture the identifier correctly.
 
 ## Documents
 
@@ -199,6 +210,7 @@ elevenagents-support-triage/
 - [docs/agent-prompts.md](docs/agent-prompts.md) - the agent's system prompts
 - [docs/data-collection-schema.md](docs/data-collection-schema.md) - extraction field spec
 - [docs/ticket-schema.md](docs/ticket-schema.md) - database schema doc
+- [tests/test_matrix.md](tests/test_matrix.md) - full 12-scenario extraction test matrix with results
 
 ## Loom walkthrough
 
