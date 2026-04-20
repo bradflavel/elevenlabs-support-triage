@@ -1,0 +1,24 @@
+{% extends "_base.html" %}
+
+{% block title %}Demo - Support Triage{% endblock %}
+
+{% block header_title %}Support Triage Demo{% endblock %}
+{% block header_subtitle %}Voice agent demo. Make a call, then watch your ticket land on the dashboard.{% endblock %}
+
+{% block content %}
+<section style="max-width: 680px;">
+  <p>
+    This is a voice agent that triages customer support calls across five intents -
+    billing, technical, account change, cancellation, or other. Click the widget below
+    to make a call. Once the call ends, your ticket will appear on the
+    <a href="/tickets">/tickets</a> dashboard within a few seconds.
+  </p>
+
+  <elevenlabs-convai agent-id="agent_2301kpm5jwagedyvcnt09sfebdph"></elevenlabs-convai>
+  <script src="https://unpkg.com/@elevenlabs/convai-widget-embed" async type="text/javascript"></script>
+
+  <p style="margin-top: 24px;">
+    <a href="/tickets">View the tickets dashboard &rarr;</a>
+  </p>
+</section>
+{% endblock %}

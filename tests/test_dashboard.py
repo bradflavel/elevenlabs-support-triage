@@ -3,10 +3,11 @@ import json
 from tests.test_webhook import _make_payload, _post
 
 
-def test_root_redirects_to_tickets(db_client):
-    response = db_client.get("/", follow_redirects=False)
-    assert response.status_code == 307
-    assert response.headers["location"] == "/tickets"
+def test_root_renders_demo_page(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "agent_2301kpm5jwagedyvcnt09sfebdph" in response.text
+    assert 'href="/tickets"' in response.text
 
 
 def test_tickets_empty_state(db_client):

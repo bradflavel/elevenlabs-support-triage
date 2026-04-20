@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,8 +16,8 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 
 @router.get("/")
-def root() -> RedirectResponse:
-    return RedirectResponse(url="/tickets", status_code=307)
+def demo(request: Request):
+    return templates.TemplateResponse(request, "demo.html", {})
 
 
 @router.get("/tickets")
