@@ -5,13 +5,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from elevenlabs.client import ElevenLabs
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session
 
 from .config import get_settings
-from .db import get_db
+from .db import SessionLocal
+from .enums import ALLOWED_INTENT_SPECIFIC_VALUES, INTENT_REQUIRED_FIELD, PUBLIC_INTENTS
 from .models import ExtractionStatus, Intent, Ticket
 from .schemas import WebhookPayload
 
@@ -57,47 +57,55 @@ def _extract_value(raw: Any) -> Any:
     return raw
 
 
-_REQUIRED_BY_INTENT = {
-    Intent.BILLING: "billing_issue_type",
-    Intent.TECHNICAL: "technical_issue_type",
-    Intent.ACCOUNT_CHANGE: "account_change_type",
-    Intent.CANCELLATION: "cancellation_reason",
-}
+def _normalized_text(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip().lower()
+    return value or None
+
+
+def _resolve_intent(data_collection: dict[str, Any]) -> tuple[Intent | None, bool]:
+    normalized = _normalized_text(_extract_value(data_collection.get("intent")))
+    if normalized is None:
+        return None, False
+    if normalized == Intent.NEEDS_REVIEW.value:
+        return None, True
+
+    public_values = {intent.value for intent in PUBLIC_INTENTS}
+    if normalized not in public_values:
+        return None, False
+
+    return Intent(normalized), False
 
 
 def derive_intent_and_status(
     data_collection: dict[str, Any],
-) -> tuple[Intent, ExtractionStatus]:
+) -> tuple[Intent | None, ExtractionStatus]:
     """Apply the locked intent-mapping rule from PLAN.md:
 
-    - ambiguity_flag true or intent="needs_review" -> Intent.NEEDS_REVIEW
-    - confident classification outside our enum -> Intent.OTHER (status partial)
-    - missing summary or missing intent-specific required field -> partial
+    - missing / unparseable intent -> partial with intent set to null
+    - ambiguity flag or legacy intent="needs_review" -> needs_review
+    - missing summary or missing / invalid intent-specific required field -> partial
     - everything present and valid -> complete
     """
-    if _extract_value(data_collection.get("ambiguity_flag")) is True:
-        return Intent.NEEDS_REVIEW, ExtractionStatus.NEEDS_REVIEW
-
-    raw_intent = _extract_value(data_collection.get("intent"))
-    if not isinstance(raw_intent, str) or not raw_intent.strip():
-        return Intent.NEEDS_REVIEW, ExtractionStatus.NEEDS_REVIEW
-
-    try:
-        intent = Intent(raw_intent.strip().lower())
-    except ValueError:
-        return Intent.OTHER, ExtractionStatus.PARTIAL
-
-    if intent == Intent.NEEDS_REVIEW:
+    intent, legacy_needs_review = _resolve_intent(data_collection)
+    if _extract_value(data_collection.get("ambiguity_flag")) is True or legacy_needs_review:
         return intent, ExtractionStatus.NEEDS_REVIEW
+
+    if intent is None:
+        return None, ExtractionStatus.PARTIAL
 
     summary = _extract_value(data_collection.get("summary"))
     if not isinstance(summary, str) or not summary.strip():
         return intent, ExtractionStatus.PARTIAL
 
-    required_field = _REQUIRED_BY_INTENT.get(intent)
+    required_field = INTENT_REQUIRED_FIELD.get(intent)
     if required_field is not None:
-        value = _extract_value(data_collection.get(required_field))
-        if not isinstance(value, str) or not value.strip():
+        normalized_value = _normalized_text(_extract_value(data_collection.get(required_field)))
+        if normalized_value is None:
+            return intent, ExtractionStatus.PARTIAL
+        allowed_values = ALLOWED_INTENT_SPECIFIC_VALUES[required_field]
+        if normalized_value not in allowed_values:
             return intent, ExtractionStatus.PARTIAL
 
     return intent, ExtractionStatus.COMPLETE
@@ -120,7 +128,6 @@ def _call_timestamps(metadata) -> tuple[datetime | None, datetime | None]:
 async def elevenlabs_webhook(
     request: Request,
     elevenlabs_signature: str | None = Header(default=None, alias="elevenlabs-signature"),
-    db: Session = Depends(get_db),
 ) -> dict[str, str]:
     secret = get_settings().elevenlabs_webhook_secret
     raw_bytes = await request.body()
@@ -148,7 +155,7 @@ async def elevenlabs_webhook(
     except ValidationError as ve:
         logger.warning("Webhook payload failed transport validation: %s", ve)
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Missing required transport-level fields",
         )
 
@@ -162,10 +169,12 @@ async def elevenlabs_webhook(
 
     call_started_at, call_ended_at = _call_timestamps(data.metadata)
 
+    db = None
     try:
+        db = SessionLocal()
         stmt = pg_insert(Ticket).values(
             conversation_id=data.conversation_id,
-            intent=intent.value,
+            intent=intent.value if intent is not None else None,
             extraction_status=extraction_status.value,
             summary=summary,
             call_started_at=call_started_at,
@@ -188,12 +197,16 @@ async def elevenlabs_webhook(
         db.execute(stmt)
         db.commit()
     except Exception:
-        db.rollback()
+        if db is not None:
+            db.rollback()
         logger.exception(
             "Failed to persist ticket for conversation_id=%s", data.conversation_id
         )
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Persistence failed"
         )
+    finally:
+        if db is not None:
+            db.close()
 
     return {"status": "ok"}

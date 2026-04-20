@@ -21,7 +21,7 @@ class WebhookData(BaseModel):
 
     agent_id: str
     conversation_id: str
-    analysis: Analysis = Field(default_factory=Analysis)
+    analysis: Analysis
     metadata: Metadata | None = None
 
 

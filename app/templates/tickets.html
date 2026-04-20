@@ -37,7 +37,7 @@
     {% for t in tickets %}
     <tr class="{% if t.extraction_status.value == 'needs_review' %}row-needs_review{% endif %}">
       <td class="timestamp">{{ t.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</td>
-      <td><span class="intent-tag">{{ t.intent.value }}</span></td>
+      <td><span class="intent-tag">{{ t.intent.value if t.intent else 'unknown' }}</span></td>
       <td><span class="status-badge status-{{ t.extraction_status.value }}">{{ t.extraction_status.value }}</span></td>
       <td>
         {% if t.summary %}

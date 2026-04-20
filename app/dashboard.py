@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import get_db
+from .enums import PUBLIC_INTENTS
 from .models import ExtractionStatus, Intent, Ticket
 
 router = APIRouter()
@@ -52,7 +53,7 @@ def tickets(
         "tickets.html",
         {
             "tickets": rows,
-            "intents": [i.value for i in Intent],
+            "intents": [i.value for i in PUBLIC_INTENTS],
             "statuses": [s.value for s in ExtractionStatus],
             "active_intent": intent_filter.value if intent_filter else None,
             "active_status": status_filter.value if status_filter else None,

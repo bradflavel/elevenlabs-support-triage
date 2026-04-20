@@ -37,9 +37,9 @@ class Ticket(Base):
     conversation_id: Mapped[str] = mapped_column(
         Text, unique=True, nullable=False, index=True
     )
-    intent: Mapped[Intent] = mapped_column(
+    intent: Mapped[Optional[Intent]] = mapped_column(
         SQLEnum(Intent, name="intent", values_callable=lambda e: [m.value for m in e]),
-        nullable=False,
+        nullable=True,
     )
     extraction_status: Mapped[ExtractionStatus] = mapped_column(
         SQLEnum(

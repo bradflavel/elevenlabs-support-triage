@@ -5,19 +5,20 @@ import time
 from collections.abc import Callable
 
 import pytest
+from sqlalchemy import event, text
+from sqlalchemy.orm import Session
+
+if not os.environ.get("DATABASE_URL"):
+    pytest.exit("DATABASE_URL is required for DB-backed tests; see RUNBOOK.md section 5")
 
 # These must exist before importing app modules; pydantic-settings reads them
-# at import time. Tests override get_db to use the fixture session, so the
-# real DATABASE_URL still has to resolve to a running Postgres (dev DB).
-os.environ.setdefault(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres"
-)
+# at import time.
 os.environ.setdefault("ELEVENLABS_WEBHOOK_SECRET", "test_secret_for_pytest")
 
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import event  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
 
+from app import main as main_module  # noqa: E402
+from app import webhook as webhook_module  # noqa: E402
 from app.db import engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base  # noqa: E402
@@ -27,45 +28,74 @@ from app.models import Base  # noqa: E402
 def _prepared_schema():
     # Create tables once per session. Per-test isolation comes from nested
     # SAVEPOINTs below, not from dropping tables.
-    Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        Base.metadata.create_all(bind=connection)
+        connection.execute(text("ALTER TABLE tickets ALTER COLUMN intent DROP NOT NULL"))
     yield
 
 
 @pytest.fixture
-def db_session(_prepared_schema):
-    """Per-test session with outer transaction + nested SAVEPOINT rollback.
-
-    Any `db.commit()` inside the handler commits to the SAVEPOINT, which is
-    rolled back when the test ends. The outer transaction is always rolled
-    back, so nothing persists.
-    """
+def db_connection(_prepared_schema):
     connection = engine.connect()
     outer = connection.begin()
-    session = Session(bind=connection, expire_on_commit=False)
-    nested = connection.begin_nested()
-
-    @event.listens_for(session, "after_transaction_end")
-    def _restart_savepoint(sess, trans):
-        nonlocal nested
-        if not nested.is_active:
-            nested = connection.begin_nested()
-
     try:
-        yield session
+        yield connection
     finally:
-        session.close()
         outer.rollback()
         connection.close()
 
 
 @pytest.fixture
-def client(db_session):
-    def _override_get_db():
-        try:
-            yield db_session
-        finally:
-            pass
+def test_session_factory(db_connection):
+    """Create sessions bound to one connection with nested SAVEPOINT rollback.
 
+    Any `db.commit()` inside the handler commits to the SAVEPOINT, which is
+    rolled back when the test ends. The outer transaction is always rolled
+    back, so nothing persists.
+    """
+
+    def _make_session() -> Session:
+        session = Session(bind=db_connection, expire_on_commit=False)
+        nested = db_connection.begin_nested()
+
+        @event.listens_for(session, "after_transaction_end")
+        def _restart_savepoint(sess, trans):
+            nonlocal nested
+            if not nested.is_active:
+                nested = db_connection.begin_nested()
+
+        return session
+
+    return _make_session
+
+
+@pytest.fixture
+def db_session(test_session_factory):
+    session = test_session_factory()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.setattr(main_module, "init_db", lambda: None)
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def db_client(test_session_factory, monkeypatch):
+    def _override_get_db():
+        session = test_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    monkeypatch.setattr(main_module, "init_db", lambda: None)
+    monkeypatch.setattr(webhook_module, "SessionLocal", test_session_factory)
     app.dependency_overrides[get_db] = _override_get_db
     with TestClient(app) as test_client:
         yield test_client

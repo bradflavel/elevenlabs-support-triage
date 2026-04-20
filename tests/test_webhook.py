@@ -2,8 +2,11 @@ import json
 import uuid
 from typing import Any
 
+import pytest
 from sqlalchemy import select
 
+import app.webhook as webhook_module
+from app.enums import INTENT_REQUIRED_FIELD
 from app.models import ExtractionStatus, Intent, Ticket
 from app.webhook import sanitize_summary
 
@@ -56,33 +59,95 @@ def _fetch(db_session, conversation_id: str) -> Ticket:
     ).scalar_one()
 
 
+def _make_intent_payload(intent: Intent, subtype_value: str | None, summary: str) -> dict[str, Any]:
+    extra_dc: dict[str, Any] = {}
+    billing_issue_type = None
+    required_field = INTENT_REQUIRED_FIELD.get(intent)
+
+    if required_field == "billing_issue_type":
+        billing_issue_type = subtype_value
+    elif required_field is not None and subtype_value is not None:
+        extra_dc[required_field] = subtype_value
+
+    return _make_payload(
+        intent=intent.value,
+        billing_issue_type=billing_issue_type,
+        summary=summary,
+        extra_dc=extra_dc or None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Signature / transport contract
 # ---------------------------------------------------------------------------
 
 
-def test_missing_signature_returns_401(client):
+def test_missing_signature_returns_401_without_creating_session(client, monkeypatch):
+    monkeypatch.setattr(
+        webhook_module,
+        "SessionLocal",
+        lambda: (_ for _ in ()).throw(AssertionError("SessionLocal should not be called")),
+    )
     body = json.dumps(_make_payload())
     assert _post(client, body, sig=None).status_code == 401
 
 
-def test_bad_signature_returns_401(client):
+def test_bad_signature_returns_401_without_creating_session(client, monkeypatch):
+    monkeypatch.setattr(
+        webhook_module,
+        "SessionLocal",
+        lambda: (_ for _ in ()).throw(AssertionError("SessionLocal should not be called")),
+    )
     body = json.dumps(_make_payload())
     response = _post(client, body, sig="t=1234567890,v0=deadbeef")
     assert response.status_code == 401
 
 
-def test_valid_signature_non_json_body_returns_400(client, webhook_secret, sign_body):
+def test_valid_signature_non_json_body_returns_400_without_creating_session(
+    client, webhook_secret, sign_body, monkeypatch
+):
+    monkeypatch.setattr(
+        webhook_module,
+        "SessionLocal",
+        lambda: (_ for _ in ()).throw(AssertionError("SessionLocal should not be called")),
+    )
     body = "this is not json"
     response = _post(client, body, sig=sign_body(body, webhook_secret))
     assert response.status_code == 400
 
 
-def test_missing_transport_fields_returns_422(client, webhook_secret, sign_body):
-    # No `data.conversation_id` -> Pydantic raises -> 422
-    body = json.dumps({"data": {"agent_id": "x", "analysis": {"data_collection_results": {}}}})
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"data": {"agent_id": "x", "analysis": {"data_collection_results": {}}}},
+        {"data": {"conversation_id": "conv_missing_agent", "analysis": {"data_collection_results": {}}}},
+        {"data": {"agent_id": "x", "conversation_id": "conv_missing_analysis"}},
+    ],
+)
+def test_missing_transport_fields_return_422_without_creating_session(
+    client, webhook_secret, sign_body, monkeypatch, payload
+):
+    monkeypatch.setattr(
+        webhook_module,
+        "SessionLocal",
+        lambda: (_ for _ in ()).throw(AssertionError("SessionLocal should not be called")),
+    )
+    body = json.dumps(payload)
     response = _post(client, body, sig=sign_body(body, webhook_secret))
     assert response.status_code == 422
+
+
+def test_valid_payload_with_session_creation_failure_returns_500(
+    client, webhook_secret, sign_body, monkeypatch
+):
+    monkeypatch.setattr(
+        webhook_module,
+        "SessionLocal",
+        lambda: (_ for _ in ()).throw(RuntimeError("db unavailable")),
+    )
+    body = json.dumps(_make_payload())
+    response = _post(client, body, sig=sign_body(body, webhook_secret))
+    assert response.status_code == 500
 
 
 # ---------------------------------------------------------------------------
@@ -90,10 +155,10 @@ def test_missing_transport_fields_returns_422(client, webhook_secret, sign_body)
 # ---------------------------------------------------------------------------
 
 
-def test_complete_billing_payload_persists_row(client, webhook_secret, sign_body, db_session):
+def test_complete_billing_payload_persists_row(db_client, webhook_secret, sign_body, db_session):
     payload = _make_payload()
     body = json.dumps(payload)
-    response = _post(client, body, sig=sign_body(body, webhook_secret))
+    response = _post(db_client, body, sig=sign_body(body, webhook_secret))
 
     assert response.status_code == 200
     row = _fetch(db_session, payload["data"]["conversation_id"])
@@ -105,13 +170,13 @@ def test_complete_billing_payload_persists_row(client, webhook_secret, sign_body
     assert row.call_ended_at is not None
 
 
-def test_replay_is_idempotent(client, webhook_secret, sign_body, db_session):
+def test_replay_is_idempotent(db_client, webhook_secret, sign_body, db_session):
     payload = _make_payload()
     body = json.dumps(payload)
     sig = sign_body(body, webhook_secret)
 
-    r1 = _post(client, body, sig)
-    r2 = _post(client, body, sig)
+    r1 = _post(db_client, body, sig)
+    r2 = _post(db_client, body, sig)
 
     assert r1.status_code == 200
     assert r2.status_code == 200
@@ -130,10 +195,10 @@ def test_replay_is_idempotent(client, webhook_secret, sign_body, db_session):
 # ---------------------------------------------------------------------------
 
 
-def test_missing_billing_issue_type_is_partial(client, webhook_secret, sign_body, db_session):
+def test_missing_billing_issue_type_is_partial(db_client, webhook_secret, sign_body, db_session):
     payload = _make_payload(billing_issue_type=None)
     body = json.dumps(payload)
-    response = _post(client, body, sig=sign_body(body, webhook_secret))
+    response = _post(db_client, body, sig=sign_body(body, webhook_secret))
 
     assert response.status_code == 200
     row = _fetch(db_session, payload["data"]["conversation_id"])
@@ -141,38 +206,84 @@ def test_missing_billing_issue_type_is_partial(client, webhook_secret, sign_body
     assert row.extraction_status == ExtractionStatus.PARTIAL
 
 
-def test_ambiguity_flag_sets_needs_review(client, webhook_secret, sign_body, db_session):
+def test_ambiguity_flag_preserves_intent_and_sets_needs_review(
+    db_client, webhook_secret, sign_body, db_session
+):
     payload = _make_payload(ambiguity_flag=True)
     body = json.dumps(payload)
-    response = _post(client, body, sig=sign_body(body, webhook_secret))
+    response = _post(db_client, body, sig=sign_body(body, webhook_secret))
 
     assert response.status_code == 200
     row = _fetch(db_session, payload["data"]["conversation_id"])
-    assert row.intent == Intent.NEEDS_REVIEW
+    assert row.intent == Intent.BILLING
     assert row.extraction_status == ExtractionStatus.NEEDS_REVIEW
 
 
-def test_unknown_intent_maps_to_other_partial(client, webhook_secret, sign_body, db_session):
-    # "weather_forecast" is outside our enum but confident -> other + partial
+def test_unknown_intent_is_null_partial(db_client, webhook_secret, sign_body, db_session):
     payload = _make_payload(intent="weather_forecast", billing_issue_type=None)
     body = json.dumps(payload)
-    response = _post(client, body, sig=sign_body(body, webhook_secret))
+    response = _post(db_client, body, sig=sign_body(body, webhook_secret))
 
     assert response.status_code == 200
     row = _fetch(db_session, payload["data"]["conversation_id"])
-    assert row.intent == Intent.OTHER
+    assert row.intent is None
     assert row.extraction_status == ExtractionStatus.PARTIAL
 
 
-def test_missing_intent_is_needs_review(client, webhook_secret, sign_body, db_session):
+def test_missing_intent_is_null_partial(db_client, webhook_secret, sign_body, db_session):
     payload = _make_payload(intent=None, billing_issue_type=None)
     body = json.dumps(payload)
-    response = _post(client, body, sig=sign_body(body, webhook_secret))
+    response = _post(db_client, body, sig=sign_body(body, webhook_secret))
 
     assert response.status_code == 200
     row = _fetch(db_session, payload["data"]["conversation_id"])
-    assert row.intent == Intent.NEEDS_REVIEW
-    assert row.extraction_status == ExtractionStatus.NEEDS_REVIEW
+    assert row.intent is None
+    assert row.extraction_status == ExtractionStatus.PARTIAL
+
+
+@pytest.mark.parametrize(
+    ("intent", "valid_value", "bogus_value"),
+    [
+        (Intent.BILLING, "charge_dispute", "bogus_billing_type"),
+        (Intent.TECHNICAL, "login", "bogus_technical_type"),
+        (Intent.ACCOUNT_CHANGE, "email", "bogus_account_change_type"),
+        (Intent.CANCELLATION, "price", "bogus_cancellation_reason"),
+    ],
+)
+def test_intent_specific_enum_values_are_enforced(
+    db_client,
+    webhook_secret,
+    sign_body,
+    db_session,
+    intent: Intent,
+    valid_value: str,
+    bogus_value: str,
+):
+    valid_payload = _make_intent_payload(
+        intent,
+        valid_value,
+        summary=f"Valid {intent.value} issue for enum enforcement",
+    )
+    valid_body = json.dumps(valid_payload)
+    valid_response = _post(db_client, valid_body, sig=sign_body(valid_body, webhook_secret))
+
+    assert valid_response.status_code == 200
+    valid_row = _fetch(db_session, valid_payload["data"]["conversation_id"])
+    assert valid_row.intent == intent
+    assert valid_row.extraction_status == ExtractionStatus.COMPLETE
+
+    invalid_payload = _make_intent_payload(
+        intent,
+        bogus_value,
+        summary=f"Invalid {intent.value} issue for enum enforcement",
+    )
+    invalid_body = json.dumps(invalid_payload)
+    invalid_response = _post(db_client, invalid_body, sig=sign_body(invalid_body, webhook_secret))
+
+    assert invalid_response.status_code == 200
+    invalid_row = _fetch(db_session, invalid_payload["data"]["conversation_id"])
+    assert invalid_row.intent == intent
+    assert invalid_row.extraction_status == ExtractionStatus.PARTIAL
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +292,7 @@ def test_missing_intent_is_needs_review(client, webhook_secret, sign_body, db_se
 
 
 def test_value_wrapped_data_collection_fields_are_unwrapped(
-    client, webhook_secret, sign_body, db_session
+    db_client, webhook_secret, sign_body, db_session
 ):
     # Analyzer sometimes returns {"value": X, "rationale": "..."} objects
     payload = _make_payload()
@@ -193,7 +304,7 @@ def test_value_wrapped_data_collection_fields_are_unwrapped(
         "ambiguity_flag": {"value": False},
     }
     body = json.dumps(payload)
-    response = _post(client, body, sig=sign_body(body, webhook_secret))
+    response = _post(db_client, body, sig=sign_body(body, webhook_secret))
 
     assert response.status_code == 200
     row = _fetch(db_session, payload["data"]["conversation_id"])
@@ -206,12 +317,12 @@ def test_value_wrapped_data_collection_fields_are_unwrapped(
 # ---------------------------------------------------------------------------
 
 
-def test_summary_pii_is_sanitized_end_to_end(client, webhook_secret, sign_body, db_session):
+def test_summary_pii_is_sanitized_end_to_end(db_client, webhook_secret, sign_body, db_session):
     payload = _make_payload(
         summary="Caller john.doe@example.com at 555-123-4567 account 987654321 disputes charge"
     )
     body = json.dumps(payload)
-    response = _post(client, body, sig=sign_body(body, webhook_secret))
+    response = _post(db_client, body, sig=sign_body(body, webhook_secret))
 
     assert response.status_code == 200
     row = _fetch(db_session, payload["data"]["conversation_id"])
